@@ -1,0 +1,15 @@
+node_modules/
+dist/
+web/node_modules/
+web/dist/
+
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+web/.env.production
+web/.env.*
+!web/.env.production.example
+
+*.log
+.DS_Store

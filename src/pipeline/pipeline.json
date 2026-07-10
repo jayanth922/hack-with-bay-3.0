@@ -1,0 +1,62 @@
+{
+  "name": "ringleader-investigation",
+  "version": "1.0.0",
+  "description": "Fraud-ring investigation pipeline: Neo4j graph detection -> LLM investigator -> structured verdict. Deployed to RocketRide Cloud as a production endpoint.",
+  "input": {
+    "mode": { "type": "string", "enum": ["scan", "account"], "default": "scan" },
+    "accountId": { "type": "string", "required": false },
+    "minScore": { "type": "number", "default": 35 }
+  },
+  "nodes": [
+    {
+      "id": "trigger",
+      "type": "http.trigger",
+      "config": { "method": "POST", "path": "/investigate" }
+    },
+    {
+      "id": "detect_rings",
+      "type": "code.typescript",
+      "comment": "Runs Cypher ring-detection against Neo4j (shared-identity clustering + circular-flow paths + structuring).",
+      "config": {
+        "entry": "detectRings",
+        "env": ["NEO4J_URI", "NEO4J_USER", "NEO4J_PASSWORD", "NEO4J_DATABASE"]
+      },
+      "inputs": { "mode": "$.trigger.mode", "accountId": "$.trigger.accountId", "minScore": "$.trigger.minScore" }
+    },
+    {
+      "id": "investigator",
+      "type": "llm.chat",
+      "comment": "LLM investigator explains each ring in plain English and recommends action.",
+      "config": {
+        "provider": "openai-compatible",
+        "model": "${AI_MODEL}",
+        "temperature": 0.2,
+        "systemPromptRef": "prompts/investigator.txt"
+      },
+      "inputs": { "rings": "$.detect_rings.rings" }
+    },
+    {
+      "id": "shape_verdict",
+      "type": "code.typescript",
+      "comment": "Merges detector evidence + LLM narrative + evidence subgraph into the final verdict payload.",
+      "config": { "entry": "shapeVerdict" },
+      "inputs": { "rings": "$.detect_rings.rings", "narrative": "$.investigator.output" }
+    },
+    {
+      "id": "output",
+      "type": "http.response",
+      "inputs": { "body": "$.shape_verdict" }
+    }
+  ],
+  "edges": [
+    { "from": "trigger", "to": "detect_rings" },
+    { "from": "detect_rings", "to": "investigator" },
+    { "from": "investigator", "to": "shape_verdict" },
+    { "from": "shape_verdict", "to": "output" }
+  ],
+  "deploy": {
+    "target": "rocketride-cloud",
+    "endpointName": "ringleader-investigation",
+    "notes": "Node type names/paths follow the RocketRide Pipeline JSON Reference and are reconciled against the live node registry via the RocketRide MCP at deploy time. The detect_rings/shape_verdict code nodes import src/pipeline/pipeline.ts::runInvestigation."
+  }
+}

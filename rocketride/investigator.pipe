@@ -1,0 +1,46 @@
+{
+  "project_id": "b1c2d3e4-5f67-4890-9abc-ringleader01",
+  "version": 1,
+  "isLocked": false,
+  "snapToGrid": true,
+  "snapGridSize": [10, 10],
+  "docRevision": 1,
+  "components": [
+    {
+      "id": "webhook_1",
+      "provider": "webhook",
+      "name": "Evidence In",
+      "config": { "hideForm": true, "mode": "Source", "parameters": {}, "type": "webhook", "name": "Evidence In" }
+    },
+    {
+      "id": "question_1",
+      "provider": "question",
+      "name": "Prompt",
+      "input": [ { "lane": "text", "from": "webhook_1" } ],
+      "config": { "type": "question", "name": "Prompt" }
+    },
+    {
+      "id": "llm_1",
+      "provider": "llm_openai_api",
+      "name": "RingLeader LLM",
+      "input": [ { "lane": "questions", "from": "question_1" } ],
+      "config": {
+        "profile": "custom",
+        "custom": {
+          "model": "${ROCKETRIDE_BB_MODEL}",
+          "base_url": "${ROCKETRIDE_BB_BASE_URL}",
+          "apikey": "${ROCKETRIDE_BB_KEY}",
+          "modelTotalTokens": 32768
+        },
+        "name": "RingLeader LLM"
+      }
+    },
+    {
+      "id": "response_answers_1",
+      "provider": "response_answers",
+      "name": "Verdict Out",
+      "input": [ { "lane": "answers", "from": "llm_1" } ],
+      "config": { "laneName": "answers", "name": "Verdict Out" }
+    }
+  ]
+}

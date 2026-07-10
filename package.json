@@ -1,0 +1,32 @@
+{
+  "name": "ringleader",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Agentic fraud-ring detective — Neo4j graph detection + RocketRide pipeline + Butterbase backend",
+  "scripts": {
+    "schema": "tsx src/scripts/applySchema.ts",
+    "seed": "tsx src/scripts/seed.ts",
+    "scan": "tsx src/scripts/scan.ts",
+    "investigate": "tsx src/scripts/investigate.ts",
+    "pipeline:local": "tsx src/pipeline/runLocal.ts",
+    "rocketride": "tsx src/rocketride/run.ts",
+    "server": "tsx src/server.ts",
+    "dev": "npm run schema && npm run seed && npm run scan"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "neo4j-driver": "^5.28.0",
+    "openai": "^4.77.0",
+    "rocketride": "^1.3.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.0"
+  }
+}

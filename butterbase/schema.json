@@ -1,0 +1,48 @@
+{
+  "$comment": "Butterbase declarative schema for RingLeader. Applied via the Butterbase MCP ('apply schema'). Postgres-backed with row-level security. Stores investigation cases; the transaction graph itself lives in Neo4j.",
+  "tables": {
+    "cases": {
+      "columns": {
+        "id": { "type": "uuid", "primaryKey": true, "default": "gen_random_uuid()" },
+        "ring_key": { "type": "text", "unique": true, "comment": "stable hash of sorted ring account ids" },
+        "severity": { "type": "text" },
+        "score": { "type": "int" },
+        "headline": { "type": "text" },
+        "explanation": { "type": "text" },
+        "recommended_action": { "type": "text" },
+        "key_evidence": { "type": "jsonb" },
+        "ring_accounts": { "type": "jsonb" },
+        "graph_snapshot": { "type": "jsonb", "comment": "nodes+edges for the evidence subgraph viz" },
+        "status": { "type": "text", "default": "'open'", "comment": "open | reviewing | confirmed | dismissed" },
+        "assigned_to": { "type": "uuid", "nullable": true },
+        "created_by": { "type": "uuid", "comment": "auth.user id of the analyst" },
+        "created_at": { "type": "timestamptz", "default": "now()" }
+      },
+      "rls": {
+        "enabled": true,
+        "policies": [
+          { "name": "analysts_read_all", "for": "select", "using": "auth.role() = 'authenticated'" },
+          { "name": "analysts_insert_own", "for": "insert", "check": "created_by = auth.uid()" },
+          { "name": "assignee_update", "for": "update", "using": "assigned_to = auth.uid() OR created_by = auth.uid()" }
+        ]
+      }
+    },
+    "audit_log": {
+      "columns": {
+        "id": { "type": "uuid", "primaryKey": true, "default": "gen_random_uuid()" },
+        "case_id": { "type": "uuid" },
+        "actor": { "type": "uuid" },
+        "action": { "type": "text" },
+        "detail": { "type": "jsonb" },
+        "at": { "type": "timestamptz", "default": "now()" }
+      },
+      "rls": {
+        "enabled": true,
+        "policies": [
+          { "name": "audit_read", "for": "select", "using": "auth.role() = 'authenticated'" },
+          { "name": "audit_insert", "for": "insert", "check": "actor = auth.uid()" }
+        ]
+      }
+    }
+  }
+}

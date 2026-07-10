@@ -1,0 +1,110 @@
+:root {
+  --bg: #0b0f1a;
+  --panel: #121829;
+  --panel2: #0e1422;
+  --line: #1f2942;
+  --text: #e6ebf5;
+  --muted: #8b98b8;
+  --accent: #22d3ee;
+  --danger: #ff3b6b;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.app { height: 100vh; display: flex; flex-direction: column; }
+
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 22px; border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, #10182b, #0b0f1a);
+}
+.brand { display: flex; align-items: center; gap: 14px; }
+.logo {
+  font-size: 26px; color: var(--accent);
+  filter: drop-shadow(0 0 10px rgba(34, 211, 238, 0.6));
+}
+header h1 { margin: 0; font-size: 20px; letter-spacing: 0.5px; }
+header p { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+
+.scan-btn {
+  background: linear-gradient(135deg, #ff3b6b, #ff7a45);
+  color: white; border: none; padding: 12px 20px; border-radius: 10px;
+  font-size: 14px; font-weight: 700; cursor: pointer;
+  box-shadow: 0 6px 22px rgba(255, 59, 107, 0.35);
+  transition: transform 0.12s ease, opacity 0.2s;
+}
+.scan-btn:hover { transform: translateY(-1px); }
+.scan-btn:disabled { opacity: 0.6; cursor: wait; }
+
+.error {
+  background: #2a1420; color: #ff9db3; padding: 10px 22px;
+  font-size: 13px; border-bottom: 1px solid #40202c;
+}
+
+.body { flex: 1; display: flex; min-height: 0; }
+
+.graph-pane { flex: 1; position: relative; min-width: 0; }
+.legend {
+  position: absolute; bottom: 14px; left: 14px; display: flex; gap: 16px;
+  font-size: 12px; color: var(--muted); background: rgba(11, 15, 26, 0.7);
+  padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line);
+  backdrop-filter: blur(6px);
+}
+.legend span { display: flex; align-items: center; gap: 6px; }
+.legend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+.panel {
+  width: 400px; border-left: 1px solid var(--line);
+  background: var(--panel); overflow-y: auto; padding: 20px;
+}
+
+.empty { color: var(--muted); }
+.empty h2 { color: var(--text); font-size: 20px; margin: 6px 0 10px; }
+.empty p { font-size: 14px; line-height: 1.6; }
+.pipeline-note {
+  margin-top: 22px; padding: 12px; border: 1px dashed var(--line);
+  border-radius: 8px; font-size: 12px; color: var(--accent); text-align: center;
+}
+
+.ring-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.tab {
+  background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+  padding: 8px 12px; border-radius: 8px; font-size: 12px; cursor: pointer;
+  display: flex; align-items: center; gap: 7px; font-weight: 600;
+}
+.tab.on { background: #16203a; box-shadow: 0 0 0 1px var(--accent) inset; }
+.tab .dot { width: 8px; height: 8px; border-radius: 50%; }
+
+.verdict .sev {
+  display: inline-flex; align-items: center; gap: 8px; color: #0b0f1a;
+  font-weight: 800; font-size: 12px; padding: 5px 11px; border-radius: 6px;
+  letter-spacing: 0.5px;
+}
+.ai-badge {
+  background: rgba(11,15,26,0.35); color: #0b0f1a; font-size: 10px;
+  padding: 1px 6px; border-radius: 4px;
+}
+.verdict h2 { font-size: 18px; line-height: 1.4; margin: 14px 0 10px; }
+.explanation { font-size: 14px; line-height: 1.65; color: #cdd6ea; }
+
+.action { margin-top: 16px; padding: 12px 14px; background: var(--panel2); border-radius: 8px; border: 1px solid var(--line); }
+.action b, .evidence b { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); }
+.action p { margin: 6px 0 0; font-size: 14px; line-height: 1.5; color: #ffd3dc; }
+
+.evidence { margin-top: 16px; }
+.evidence ul { margin: 8px 0 0; padding-left: 18px; }
+.evidence li { font-size: 13px; line-height: 1.6; color: #cdd6ea; margin-bottom: 5px; }
+
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 18px; }
+.stats div {
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
+  padding: 12px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px;
+}
+.stats span { display: block; font-size: 20px; color: var(--text); font-weight: 700; margin-bottom: 2px; text-transform: none; }
