@@ -375,11 +375,12 @@ export default async function handler(req: Request, ctx: any): Promise<Response>
     let rings = await scanRings(body.minScore ?? 35);
     if (body.mode === 'account' && body.accountId) rings = rings.filter((r) => r.ringAccounts.includes(body.accountId));
     rings = rings.slice(0, body.topN ?? 5);
-    const enriched = [];
-    for (const ring of rings) {
+    // Investigate every ring concurrently — each runs its own ephemeral RocketRide
+    // pipeline, so N rings take ~1 pipeline's time instead of N in series.
+    const enriched = await Promise.all(rings.map(async (ring) => {
       const [verdict, graph] = await Promise.all([investigate(ring), subgraph(ring.ringAccounts)]);
-      enriched.push({ evidence: ring, verdict, graph });
-    }
+      return { evidence: ring, verdict, graph };
+    }));
     return json({ ringsFound: rings.length, rings: enriched });
   } catch (e: any) {
     return json({ error: e.message }, 500);

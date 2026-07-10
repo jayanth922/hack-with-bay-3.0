@@ -28,7 +28,7 @@ export default function App() {
       const cases = await scan();               // fast: clues render from this
       if (!cases.length) throw new Error('No rings detected.');
       setRings(cases); setRingIdx(0); setStep(0); setPhase('overview');
-      const timeout = new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 70000));
+      const timeout = new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 90000));
       Promise.race([loadVerdicts(), timeout])   // slow: AI verdicts stream in behind
         .then((map: any) => setRings((prev) => prev.map((c) => ({ ...c, verdict: map[ringKey(c.evidence.ringAccounts)] ?? c.verdict }))))
         .catch(() => setRings((prev) => prev.map((c) => ({ ...c, verdict: c.verdict ?? fallbackVerdict(c) }))));
