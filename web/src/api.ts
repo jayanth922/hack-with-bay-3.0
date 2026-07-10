@@ -5,15 +5,16 @@ export interface Verdict {
   explanation: string;
   recommendedAction: string;
   keyEvidence: string[];
-  source?: 'ai' | 'template';
+  source?: 'ai' | 'template' | 'rocketride';
 }
 
 export interface RingGraph {
-  nodes: Array<{ id: string; name: string; country: string; planted?: boolean; devices: string[]; ips: string[] }>;
-  edges: Array<{ source: string; target: string; amount: number; ts: string }>;
+  accounts: Array<{ id: string; name: string; country: string; planted?: boolean }>;
+  transfers: Array<{ source: string; target: string; amount: number; ts: string }>;
+  identities: Array<{ id: string; kind: 'device' | 'ip'; label: string; accounts: string[] }>;
 }
 
-export interface Ring {
+export interface Evidence {
   ringAccounts: string[];
   score: number;
   severity: Verdict['severity'];
@@ -23,17 +24,21 @@ export interface Ring {
   totalFlow: number;
   creationWindowMinutes?: number;
   structuringCount: number;
-  graph: RingGraph;
+  sharedDevices?: { fingerprint: string; accounts: string[] }[];
+  sharedIps?: { addr: string; accounts: string[] }[];
 }
 
 export interface InvestigatedRing {
-  evidence: Ring;
+  evidence: Evidence;
   verdict: Verdict;
   graph: RingGraph;
 }
 
-// Production: call the deployed Butterbase function (needs an end-user JWT).
-// Local dev (no VITE_API_BASE): hit the local Express server via the Vite proxy.
+export interface NetworkGraph {
+  nodes: Array<{ id: string; name: string; country: string; planted?: boolean }>;
+  edges: Array<{ source: string; target: string; amount: number; ts: string }>;
+}
+
 const env = (import.meta as any).env ?? {};
 const BASE: string = env.VITE_API_BASE ?? '';
 const isFunction = BASE.includes('/fn/');
@@ -55,9 +60,8 @@ async function login(): Promise<string> {
   return token!;
 }
 
-// Fetch with the analyst JWT; re-login once on 401 (tokens expire ~15 min).
 async function authed(url: string, init: RequestInit = {}): Promise<Response> {
-  if (!isFunction) return fetch(url, init); // local dev, no auth
+  if (!isFunction) return fetch(url, init);
   if (!token) await login();
   const withAuth = (t: string): RequestInit => ({
     ...init,
@@ -71,7 +75,7 @@ async function authed(url: string, init: RequestInit = {}): Promise<Response> {
   return r;
 }
 
-export async function fullGraph(): Promise<RingGraph> {
+export async function fullGraph(): Promise<NetworkGraph> {
   const r = await authed(isFunction ? `${BASE}?op=graph` : `${BASE}/api/graph`);
   if (!r.ok) throw new Error(`graph failed: ${r.status}`);
   return r.json();
@@ -84,10 +88,5 @@ export async function investigate(): Promise<{ rings: InvestigatedRing[]; ringsF
     body: JSON.stringify({ mode: 'scan' }),
   });
   if (!r.ok) throw new Error(`investigate failed: ${r.status}`);
-  return r.json();
-}
-
-export async function health() {
-  const r = await authed(isFunction ? `${BASE}?op=health` : `${BASE}/api/health`);
   return r.json();
 }

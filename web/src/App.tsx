@@ -1,51 +1,46 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
-import { fullGraph, investigate, InvestigatedRing, RingGraph } from './api';
+import { fullGraph, investigate, InvestigatedRing } from './api';
 
-type GNode = { id: string; name: string; country: string; planted?: boolean; ring?: number };
-type GLink = { source: string; target: string; amount: number; inRing?: boolean };
-
-const RING_COLORS = ['#ff3b6b', '#ffab00', '#8b5cf6', '#22d3ee'];
-const sevColor: Record<string, string> = { critical: '#ff3b6b', high: '#ff7a45', medium: '#ffab00', low: '#9ca3af' };
+const sevColor: Record<string, string> = {
+  critical: '#ff3b6b', high: '#ff7a45', medium: '#f5a524', low: '#7c8aa5',
+};
+const LOADING_STEPS = [
+  'Querying Neo4j transaction graph…',
+  'Clustering by shared devices & IPs…',
+  'Tracing circular money flows…',
+  'Running RocketRide investigator…',
+];
 
 export default function App() {
-  const fgRef = useRef<any>(null);
-  const [graph, setGraph] = useState<{ nodes: GNode[]; links: GLink[] }>({ nodes: [], links: [] });
+  const [network, setNetwork] = useState<{ accounts: number; txns: number }>({ accounts: 0, txns: 0 });
   const [rings, setRings] = useState<InvestigatedRing[]>([]);
-  const [ringMembership, setRingMembership] = useState<Record<string, number>>({});
-  const [selected, setSelected] = useState<number | null>(null);
+  const [selected, setSelected] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [step, setStep] = useState(0);
   const [scanned, setScanned] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     fullGraph()
-      .then((g: RingGraph) => setGraph(toForce(g)))
+      .then((g) => setNetwork({ accounts: g.nodes.length, txns: g.edges.length }))
       .catch((e) => setError(String(e.message ?? e)));
   }, []);
 
+  useEffect(() => {
+    if (!loading) return;
+    setStep(0);
+    const t = setInterval(() => setStep((s) => Math.min(s + 1, LOADING_STEPS.length - 1)), 2500);
+    return () => clearInterval(t);
+  }, [loading]);
+
   async function runScan() {
-    setLoading(true);
-    setError(null);
+    setLoading(true); setError(null);
     try {
       const res = await investigate();
-      const membership: Record<string, number> = {};
-      res.rings.forEach((r, i) => r.evidence.ringAccounts.forEach((a) => (membership[a] = i)));
-      setRingMembership(membership);
       setRings(res.rings);
+      setSelected(0);
       setScanned(true);
-      setSelected(res.rings.length ? 0 : null);
-      // re-tag existing graph nodes/links with ring membership + zoom to fit
-      setGraph((g) => ({
-        nodes: g.nodes.map((n) => ({ ...n, ring: membership[n.id] })),
-        links: g.links.map((l) => ({
-          ...l,
-          inRing:
-            membership[srcId(l.source)] !== undefined &&
-            membership[srcId(l.source)] === membership[srcId(l.target)],
-        })),
-      }));
-      setTimeout(() => fgRef.current?.zoomToFit(600, 60), 400);
     } catch (e: any) {
       setError(String(e.message ?? e));
     } finally {
@@ -53,132 +48,214 @@ export default function App() {
     }
   }
 
-  const active = selected != null ? rings[selected] : null;
+  const active = rings[selected];
+  const flagged = rings.reduce((n, r) => n + r.evidence.ringAccounts.length, 0);
+  const exposure = rings.reduce((n, r) => n + (r.evidence.totalFlow || 0), 0);
 
   return (
-    <div className="app">
-      <header>
+    <div className="console">
+      <header className="topbar">
         <div className="brand">
           <span className="logo">◈</span>
           <div>
             <h1>RingLeader</h1>
-            <p>Agentic fraud-ring detective · Neo4j × RocketRide × Butterbase</p>
+            <p>Fraud-ring investigation console</p>
           </div>
         </div>
+        <div className="stack">Neo4j · RocketRide · Butterbase</div>
         <button className="scan-btn" onClick={runScan} disabled={loading}>
-          {loading ? 'Investigating…' : scanned ? '↻ Re-scan network' : '⚡ Scan for fraud rings'}
+          {loading ? 'Investigating…' : scanned ? '↻ Re-run detection' : '⚡ Run detection'}
         </button>
       </header>
 
-      {error && <div className="error">⚠ {error} — is the API running? (`npm run server`)</div>}
+      <div className="statbar">
+        <Stat label="Accounts monitored" value={network.accounts.toLocaleString()} />
+        <Stat label="Transactions" value={network.txns.toLocaleString()} />
+        <Stat label="Fraud rings" value={scanned ? String(rings.length) : '—'} tone={rings.length ? 'danger' : undefined} />
+        <Stat label="Accounts flagged" value={scanned ? String(flagged) : '—'} tone={flagged ? 'danger' : undefined} />
+        <Stat label="Exposure" value={scanned ? '$' + Math.round(exposure).toLocaleString() : '—'} tone={exposure ? 'danger' : undefined} />
+      </div>
 
-      <div className="body">
-        <div className="graph-pane">
-          <ForceGraph2D
-            ref={fgRef}
-            graphData={graph as any}
-            backgroundColor="#0b0f1a"
-            nodeRelSize={4}
-            nodeLabel={(n: any) => `${n.name} (${n.id})${n.ring !== undefined ? ' · RING' : ''}`}
-            nodeColor={(n: any) => (n.ring !== undefined ? RING_COLORS[n.ring % RING_COLORS.length] : '#2b3550')}
-            nodeVal={(n: any) => (n.ring !== undefined ? 6 : 1.5)}
-            linkColor={(l: any) => (l.inRing ? '#ff3b6b' : 'rgba(120,140,180,0.12)')}
-            linkWidth={(l: any) => (l.inRing ? 2 : 0.5)}
-            linkDirectionalParticles={(l: any) => (l.inRing ? 4 : 0)}
-            linkDirectionalParticleWidth={2}
-            onNodeClick={(n: any) => {
-              if (n.ring !== undefined) setSelected(n.ring);
-            }}
-            cooldownTicks={100}
-          />
-          <div className="legend">
-            <span><i style={{ background: '#2b3550' }} /> normal account</span>
-            <span><i style={{ background: '#ff3b6b' }} /> fraud ring</span>
-            <span>{graph.nodes.length} accounts · {graph.links.length} transactions</span>
-          </div>
-        </div>
+      {error && <div className="error">⚠ {error}</div>}
 
-        <aside className="panel">
-          {!scanned && (
-            <div className="empty">
-              <h2>The network looks fine.</h2>
-              <p>
-                {graph.nodes.length} accounts, thousands of transactions. Every payment looks
-                ordinary in isolation. Hit <b>Scan</b> and let the agent surface the rings hiding in
-                the <i>relationships</i>.
-              </p>
-              <div className="pipeline-note">
-                Neo4j graph detection → RocketRide pipeline → LLM investigator
+      <div className="workspace">
+        {/* LEFT — alert queue */}
+        <aside className="alerts">
+          <div className="pane-head">Alert queue {scanned && <span className="count">{rings.length}</span>}</div>
+          {!scanned && <div className="pane-empty">Run detection to surface coordinated fraud rings hiding in the network.</div>}
+          {rings.map((r, i) => (
+            <button key={i} className={`alert ${selected === i ? 'on' : ''}`} onClick={() => setSelected(i)}>
+              <div className="alert-top">
+                <span className="sev-pill" style={{ background: sevColor[r.verdict.severity] }}>{r.verdict.severity}</span>
+                <span className="alert-id">RING-{String(i + 1).padStart(3, '0')}</span>
+                <span className="alert-score">{r.verdict.score}</span>
               </div>
+              <div className="alert-head">{r.verdict.headline}</div>
+              <div className="alert-meta">
+                {r.evidence.ringAccounts.length} accounts · ${Math.round(r.evidence.totalFlow).toLocaleString()} flow
+              </div>
+            </button>
+          ))}
+        </aside>
+
+        {/* CENTER — link-analysis graph */}
+        <main className="canvas">
+          {loading && (
+            <div className="loading">
+              <div className="spinner" />
+              <div className="loading-step">{LOADING_STEPS[step]}</div>
             </div>
           )}
-
-          {scanned && !rings.length && <div className="empty"><h2>No rings above threshold.</h2></div>}
-
-          {scanned && rings.length > 0 && (
-            <>
-              <div className="ring-tabs">
-                {rings.map((r, i) => (
-                  <button
-                    key={i}
-                    className={`tab ${selected === i ? 'on' : ''}`}
-                    style={{ borderColor: sevColor[r.verdict.severity] }}
-                    onClick={() => setSelected(i)}
-                  >
-                    <span className="dot" style={{ background: sevColor[r.verdict.severity] }} />
-                    Ring {i + 1} · {r.verdict.score}
-                  </button>
-                ))}
-              </div>
-
-              {active && (
-                <div className="verdict">
-                  <div className="sev" style={{ background: sevColor[active.verdict.severity] }}>
-                    {active.verdict.severity.toUpperCase()} · {active.verdict.score}/100
-                    {active.verdict.source === 'ai' && <span className="ai-badge">AI</span>}
-                  </div>
-                  <h2>{active.verdict.headline}</h2>
-                  <p className="explanation">{active.verdict.explanation}</p>
-
-                  <div className="action">
-                    <b>Recommended action</b>
-                    <p>{active.verdict.recommendedAction}</p>
-                  </div>
-
-                  <div className="evidence">
-                    <b>Graph evidence</b>
-                    <ul>
-                      {active.verdict.keyEvidence.map((e, i) => (
-                        <li key={i}>{e}</li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  <div className="stats">
-                    <div><span>{active.evidence.ringAccounts.length}</span>accounts</div>
-                    <div><span>${Math.round(active.evidence.totalFlow).toLocaleString()}</span>total flow</div>
-                    {active.evidence.creationWindowMinutes != null && (
-                      <div><span>{active.evidence.creationWindowMinutes}m</span>signup window</div>
-                    )}
-                    <div><span>{active.evidence.structuringCount}</span>sub-$10k transfers</div>
-                  </div>
-                </div>
-              )}
-            </>
+          {!loading && !scanned && (
+            <div className="canvas-empty">
+              <div className="big">◈</div>
+              <h2>Ready to investigate</h2>
+              <p>{network.accounts.toLocaleString()} accounts and {network.txns.toLocaleString()} transactions are being monitored.
+                Every transaction looks normal on its own — click <b>Run detection</b> to reveal the rings hiding in the relationships.</p>
+            </div>
           )}
+          {!loading && scanned && active && <RingGraph ring={active} key={selected} />}
+        </main>
+
+        {/* RIGHT — investigation / case panel */}
+        <aside className="case">
+          {!active && <div className="pane-empty">Select an alert to open the investigation.</div>}
+          {active && <CasePanel ring={active} />}
         </aside>
       </div>
     </div>
   );
 }
 
-function srcId(x: any): string {
-  return typeof x === 'object' ? x.id : x;
+function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
+  return (
+    <div className="stat">
+      <div className={`stat-val ${tone ?? ''}`}>{value}</div>
+      <div className="stat-label">{label}</div>
+    </div>
+  );
 }
 
-function toForce(g: RingGraph): { nodes: GNode[]; links: GLink[] } {
-  return {
-    nodes: g.nodes.map((n) => ({ id: n.id, name: n.name, country: n.country, planted: n.planted })),
-    links: g.edges.map((e) => ({ source: e.source, target: e.target, amount: e.amount })),
-  };
+function shortName(id: string, name: string) {
+  return name?.split(' ')[0] ?? id;
+}
+
+function RingGraph({ ring }: { ring: InvestigatedRing }) {
+  const fgRef = useRef<any>(null);
+  const data = useMemo(() => {
+    const g = ring.graph;
+    const cyc = ring.evidence.cycle ?? [];
+    const cycleEdges = new Set<string>();
+    for (let i = 0; i < cyc.length - 1; i++) cycleEdges.add(cyc[i] + '>' + cyc[i + 1]);
+    const nodes = [
+      ...g.accounts.map((a) => ({ id: a.id, kind: 'account', label: shortName(a.id, a.name) })),
+      ...g.identities.map((idn) => ({ id: idn.id, kind: idn.kind, label: idn.label })),
+    ];
+    const links = [
+      ...g.transfers.map((t) => ({ source: t.source, target: t.target, kind: 'money', amount: t.amount, cycle: cycleEdges.has(t.source + '>' + t.target) })),
+      ...g.identities.flatMap((idn) => idn.accounts.map((a) => ({ source: a, target: idn.id, kind: 'shared' }))),
+    ];
+    return { nodes, links };
+  }, [ring]);
+
+  useEffect(() => { const t = setTimeout(() => fgRef.current?.zoomToFit(500, 70), 400); return () => clearTimeout(t); }, [data]);
+
+  return (
+    <>
+      <div className="canvas-head">
+        <span className="sev-pill" style={{ background: sevColor[ring.verdict.severity] }}>{ring.verdict.severity}</span>
+        Link analysis — {ring.evidence.ringAccounts.length} accounts converging on {ring.graph.identities.length} shared {ring.graph.identities.length === 1 ? 'identifier' : 'identifiers'}
+        <button className="fit-btn" onClick={() => fgRef.current?.zoomToFit(500, 70)}>Fit</button>
+      </div>
+      <ForceGraph2D
+        ref={fgRef}
+        graphData={data as any}
+        backgroundColor="#0b0f1a"
+        nodeRelSize={6}
+        cooldownTicks={120}
+        linkColor={(l: any) => (l.kind === 'money' ? (l.cycle ? '#ff3b6b' : 'rgba(245,165,36,0.55)') : 'rgba(124,138,165,0.35)')}
+        linkWidth={(l: any) => (l.cycle ? 2.5 : 1)}
+        linkLineDash={(l: any) => (l.kind === 'shared' ? [4, 4] : null)}
+        linkDirectionalArrowLength={(l: any) => (l.kind === 'money' ? 4 : 0)}
+        linkDirectionalArrowRelPos={1}
+        linkDirectionalParticles={(l: any) => (l.cycle ? 4 : 0)}
+        linkDirectionalParticleWidth={2.5}
+        linkDirectionalParticleColor={() => '#ff3b6b'}
+        nodeCanvasObject={(node: any, ctx, scale) => {
+          const r = node.kind === 'account' ? 6 : 8;
+          ctx.save();
+          if (node.kind === 'device' || node.kind === 'ip') {
+            // shared identity: the smoking gun — diamond (device) / square (ip)
+            ctx.fillStyle = node.kind === 'device' ? '#ff3b6b' : '#a855f7';
+            ctx.strokeStyle = '#0b0f1a'; ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            if (node.kind === 'device') { // diamond
+              ctx.moveTo(node.x, node.y - r); ctx.lineTo(node.x + r, node.y);
+              ctx.lineTo(node.x, node.y + r); ctx.lineTo(node.x - r, node.y); ctx.closePath();
+            } else { // square
+              ctx.rect(node.x - r, node.y - r, r * 2, r * 2);
+            }
+            ctx.fill(); ctx.stroke();
+          } else {
+            ctx.fillStyle = '#cbd5e1'; ctx.strokeStyle = '#64748b'; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.arc(node.x, node.y, r, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
+          }
+          const fs = Math.max(9, 11 / scale);
+          ctx.font = `${fs}px -apple-system, sans-serif`;
+          ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+          ctx.fillStyle = node.kind === 'account' ? '#94a3b8' : (node.kind === 'device' ? '#ff8fa8' : '#c9a5f5');
+          const label = node.kind === 'account' ? node.label : (node.kind === 'device' ? '📱 ' + node.label : '🌐 ' + node.label);
+          ctx.fillText(label, node.x, node.y + r + 2);
+          ctx.restore();
+        }}
+      />
+      <div className="legend">
+        <span><i className="dot acc" /> account</span>
+        <span><i className="dot dev" /> shared device</span>
+        <span><i className="dot ip" /> shared IP</span>
+        <span><i className="line cyc" /> money cycle</span>
+      </div>
+    </>
+  );
+}
+
+function CasePanel({ ring }: { ring: InvestigatedRing }) {
+  const v = ring.verdict;
+  const e = ring.evidence;
+  return (
+    <div className="casebody">
+      <div className="case-band" style={{ background: sevColor[v.severity] }}>
+        <span className="band-sev">{v.severity} risk</span>
+        <span className="band-score">{v.score}<small>/100</small></span>
+      </div>
+      <div className="via">
+        Verdict by {v.source === 'rocketride' ? 'RocketRide Cloud pipeline' : v.source === 'ai' ? 'AI investigator' : 'rule engine'}
+      </div>
+
+      <h2 className="case-head">{v.headline}</h2>
+      <p className="case-explain">{v.explanation}</p>
+
+      <div className="action-box">
+        <div className="action-label">Recommended action</div>
+        <p>{v.recommendedAction}</p>
+        <div className="action-btns">
+          <button className="freeze">Freeze accounts</button>
+          <button className="sar">File SAR</button>
+        </div>
+      </div>
+
+      <div className="section-label">Evidence</div>
+      <ul className="evidence">
+        {v.keyEvidence.map((k, i) => <li key={i}><span className="check">✓</span>{k}</li>)}
+      </ul>
+
+      <div className="section-label">Signals</div>
+      <div className="mini-stats">
+        <div><span>{e.ringAccounts.length}</span>accounts</div>
+        <div><span>${Math.round(e.totalFlow).toLocaleString()}</span>total flow</div>
+        {e.creationWindowMinutes != null && <div><span>{e.creationWindowMinutes}m</span>signup window</div>}
+        <div><span>{e.structuringCount}</span>sub-$10k transfers</div>
+      </div>
+    </div>
+  );
 }

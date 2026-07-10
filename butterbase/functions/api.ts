@@ -169,21 +169,32 @@ export default async function handler(req: Request, ctx: any): Promise<Response>
     };
   }
 
+  // Link-analysis subgraph: accounts + the shared device/IP nodes they converge on
+  // + money-flow edges. The shared-identity nodes make the ring visually obvious.
   async function subgraph(ids: string[]) {
-    const nodes = await cypher(
+    const accounts = await cypher(
       `MATCH (a:Account) WHERE a.id IN $ids
-       OPTIONAL MATCH (a)-[:USED_DEVICE]->(d:Device)
-       OPTIONAL MATCH (a)-[:USED_IP]->(i:Ip)
-       RETURN a.id AS id, a.name AS name, a.country AS country, a.createdAt AS createdAt,
-              a.planted AS planted, collect(DISTINCT d.fingerprint) AS devices, collect(DISTINCT i.addr) AS ips`,
+       RETURN a.id AS id, a.name AS name, a.country AS country, a.createdAt AS createdAt, a.planted AS planted`,
       { ids }
     );
-    const edges = await cypher(
+    const transfers = await cypher(
       `MATCH (a:Account)-[r:SENT]->(b:Account) WHERE a.id IN $ids AND b.id IN $ids
        RETURN a.id AS source, b.id AS target, r.amount AS amount, r.ts AS ts`,
       { ids }
     );
-    return { nodes, edges };
+    const devices = await cypher(
+      `MATCH (a:Account)-[:USED_DEVICE]->(d:Device) WHERE a.id IN $ids
+       WITH d, collect(a.id) AS accounts WHERE size(accounts) >= 2
+       RETURN 'dev:' + d.fingerprint AS id, 'device' AS kind, d.fingerprint AS label, accounts`,
+      { ids }
+    );
+    const ipsShared = await cypher(
+      `MATCH (a:Account)-[:USED_IP]->(i:Ip) WHERE a.id IN $ids
+       WITH i, collect(a.id) AS accounts WHERE size(accounts) >= 2
+       RETURN 'ip:' + i.addr AS id, 'ip' AS kind, i.addr AS label, accounts`,
+      { ids }
+    );
+    return { accounts, transfers, identities: [...devices, ...ipsShared] };
   }
 
   async function fullGraph(limit = 1500) {
