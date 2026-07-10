@@ -119,4 +119,16 @@ export async function loadVerdicts(): Promise<Record<string, Verdict>> {
   return map;
 }
 
+// Persist an analyst action (freeze / file SAR) as a case row in Butterbase Postgres.
+export async function logCase(c: RingCase, action: 'freeze' | 'sar'): Promise<{ total: number }> {
+  const e = c.evidence;
+  const r = await authed(isFunction ? `${BASE}?op=case` : `${BASE}/api/case`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ringKey: ringKey(e.ringAccounts), typology: e.typology, severity: e.severity, score: e.score, action, ringAccounts: e.ringAccounts }),
+  });
+  if (!r.ok) throw new Error(`case failed: ${r.status}`);
+  return r.json();
+}
+
 export { ringKey };

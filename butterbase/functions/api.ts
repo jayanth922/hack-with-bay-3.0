@@ -370,6 +370,21 @@ export default async function handler(req: Request, ctx: any): Promise<Response>
       for (const r of rings) withGraph.push({ ...r, graph: await subgraph(r.ringAccounts) });
       return json({ rings: withGraph });
     }
+    // Analyst action — persist a case to Butterbase Postgres and return the running total.
+    if (req.method === 'POST' && op === 'case') {
+      const b = await req.json().catch(() => ({}));
+      await ctx.db.query(
+        `INSERT INTO cases (ring_key, typology, severity, score, action, ring_accounts)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+        [b.ringKey ?? '', b.typology ?? '', b.severity ?? '', Number(b.score) || 0, b.action ?? '', JSON.stringify(b.ringAccounts ?? [])]
+      );
+      const c = await ctx.db.query(`SELECT count(*)::int AS n FROM cases`);
+      return json({ ok: true, total: c.rows?.[0]?.n ?? null });
+    }
+    if (req.method === 'GET' && op === 'cases') {
+      const c = await ctx.db.query(`SELECT count(*)::int AS n FROM cases`);
+      return json({ total: c.rows?.[0]?.n ?? 0 });
+    }
     // POST = full investigation (detector + LLM + subgraph)
     const body = req.method === 'POST' ? await req.json().catch(() => ({})) : {};
     let rings = await scanRings(body.minScore ?? 35);

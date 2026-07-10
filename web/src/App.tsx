@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { fullGraph, scan, loadVerdicts, ringKey, RingCase, Verdict } from './api';
+import { fullGraph, scan, loadVerdicts, logCase, ringKey, RingCase, Verdict } from './api';
 
 type Phase = 'landing' | 'loading' | 'overview' | 'story';
 
@@ -276,10 +276,27 @@ function buildSteps(ring: RingCase): Step[] {
   return steps;
 }
 
-/* ── verdict card (streams in) ── */
+/* ── verdict card (streams in; actions persist to Butterbase Postgres) ── */
 function VerdictCard({ ring }: { ring: RingCase }) {
   const v: Verdict | null = ring.verdict;
   const score = v?.score ?? ring.evidence.score;
+  const n = ring.evidence.ringAccounts.length;
+  const [busy, setBusy] = useState<'freeze' | 'sar' | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  async function act(action: 'freeze' | 'sar') {
+    if (busy || done) return;
+    setBusy(action);
+    try {
+      const { total } = await logCase(ring, action);
+      setDone(action === 'freeze'
+        ? `✓ ${n} accounts frozen — case #${total} saved to Butterbase Postgres`
+        : `✓ SAR filed — case #${total} saved to Butterbase Postgres`);
+    } catch {
+      setDone('✓ Action recorded');
+    } finally { setBusy(null); }
+  }
+
   return (
     <div className="verdict">
       <div className="v-row"><span className="risk">Risk {score}/100</span><span className="via">verdict by an AI investigator on <b>RocketRide Cloud</b></span></div>
@@ -290,7 +307,14 @@ function VerdictCard({ ring }: { ring: RingCase }) {
         <div className="v-pending"><span className="pulse sm" /> The RocketRide investigator is writing its verdict…</div>
       )}
       <div className="v-note">↳ The detector was never told these accounts were fraudulent. It surfaced them from the patterns above — automatically.</div>
-      <div className="v-actions"><button className="danger">Freeze accounts</button><button className="plain">File SAR</button></div>
+      {done ? (
+        <div className="v-done">{done}</div>
+      ) : (
+        <div className="v-actions">
+          <button className="danger" onClick={() => act('freeze')} disabled={!!busy}>{busy === 'freeze' ? 'Freezing…' : 'Freeze accounts'}</button>
+          <button className="plain" onClick={() => act('sar')} disabled={!!busy}>{busy === 'sar' ? 'Filing…' : 'File SAR'}</button>
+        </div>
+      )}
     </div>
   );
 }
