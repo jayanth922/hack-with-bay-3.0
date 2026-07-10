@@ -28,9 +28,10 @@ export default function App() {
       const cases = await scan();               // fast: clues render from this
       if (!cases.length) throw new Error('No rings detected.');
       setRings(cases); setRingIdx(0); setStep(0); setPhase('overview');
-      loadVerdicts()                            // slow: AI verdicts stream in behind
-        .then((map) => setRings((prev) => prev.map((c) => ({ ...c, verdict: map[ringKey(c.evidence.ringAccounts)] ?? c.verdict }))))
-        .catch(() => {});
+      const timeout = new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 70000));
+      Promise.race([loadVerdicts(), timeout])   // slow: AI verdicts stream in behind
+        .then((map: any) => setRings((prev) => prev.map((c) => ({ ...c, verdict: map[ringKey(c.evidence.ringAccounts)] ?? c.verdict }))))
+        .catch(() => setRings((prev) => prev.map((c) => ({ ...c, verdict: c.verdict ?? fallbackVerdict(c) }))));
     } catch (e: any) { setError(String(e.message ?? e)); setPhase('landing'); }
   }
 
@@ -133,6 +134,22 @@ function Overview({ net, rings, onPick }: { net: { accounts: number }; rings: Ri
       <div className="foot">Neo4j finds the ring · RocketRide explains it · Butterbase serves it</div>
     </div>
   );
+}
+
+// If the AI verdict can't be fetched, build a solid one from the evidence so the
+// case is never left blank.
+function fallbackVerdict(c: RingCase): Verdict {
+  const e = c.evidence;
+  return {
+    severity: e.severity, score: e.score,
+    headline: `${e.ringAccounts.length}-account coordinated fraud ring`,
+    explanation: `These ${e.ringAccounts.length} accounts behave as one operation. ${e.signals.join(' ')} In isolation each transaction looks ordinary; only the graph reveals the ring.`,
+    recommendedAction: e.score >= 60
+      ? 'Freeze all accounts in the ring, file a SAR, and escalate to fraud investigations.'
+      : 'Flag for manual review and monitor for further coordinated activity.',
+    keyEvidence: e.signals.slice(0, 5),
+    source: 'template',
+  };
 }
 
 /* ── steps ── */
