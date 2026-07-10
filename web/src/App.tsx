@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { fullGraph, scan, loadVerdicts, logCase, ringKey, RingCase, Verdict } from './api';
+import { fullGraph, scan, loadVerdicts, logCase, getCases, ringKey, RingCase, Verdict, CaseRow } from './api';
 
 type Phase = 'landing' | 'loading' | 'overview' | 'story';
 
@@ -59,6 +59,7 @@ export default function App() {
       <header className="bar">
         <span className="mark">◈ RingLeader</span>
         <button className="crumbs link" onClick={() => setPhase('overview')}>← All rings</button>
+        <CaseLog />
         <span className="progress">{String(step + 1).padStart(2, '0')} <em>/ {String(steps.length).padStart(2, '0')}</em></span>
       </header>
 
@@ -108,6 +109,39 @@ function Loading({ step }: { step: number }) {
   return <div className="loading-page"><div className="pulse" /><div className="load-msg">{msgs[step]}</div></div>;
 }
 
+/* ── case log: reads the persisted cases back from Butterbase Postgres ── */
+function CaseLog() {
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<CaseRow[] | null>(null);
+  useEffect(() => { if (open) { setRows(null); getCases().then(setRows).catch(() => setRows([])); } }, [open]);
+  const sev: Record<string, string> = { critical: '#e5484d', high: '#f76808', medium: '#f5a524', low: '#8b98b4' };
+  const when = (iso: string) => { try { return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return ''; } };
+  return (
+    <>
+      <button className="caselog-btn" onClick={() => setOpen(true)}>Case log</button>
+      {open && (
+        <div className="modal-bg" onClick={() => setOpen(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head"><span>Case log</span><span className="modal-sub">from Butterbase Postgres</span><button className="x" onClick={() => setOpen(false)}>✕</button></div>
+            {rows === null && <div className="modal-empty">Loading…</div>}
+            {rows && rows.length === 0 && <div className="modal-empty">No cases filed yet. Freeze a ring or file a SAR to log one.</div>}
+            {rows && rows.length > 0 && (
+              <div className="caselist">
+                {rows.map((c) => (
+                  <div key={c.id} className="caserow">
+                    <span className="cdot" style={{ background: sev[c.severity] ?? '#8b98b4' }} />
+                    <div className="cmain"><div className="ctop">{c.typology} <span className="cact">{c.action === 'freeze' ? 'accounts frozen' : 'SAR filed'}</span></div><div className="cmeta">risk {c.score} · {when(c.created_at)}</div></div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 /* ── overview: bridges the whole network to the specific rings ── */
 function Overview({ net, rings, onPick }: { net: { accounts: number }; rings: RingCase[]; onPick: (i: number) => void }) {
   const flagged = rings.reduce((n, r) => n + r.evidence.ringAccounts.length, 0);
@@ -115,7 +149,7 @@ function Overview({ net, rings, onPick }: { net: { accounts: number }; rings: Ri
   const sevColor: Record<string, string> = { critical: '#e5484d', high: '#f76808', medium: '#f5a524', low: '#8b98b4' };
   return (
     <div className="overview">
-      <span className="mark top">◈ RingLeader</span>
+      <div className="ov-bar"><span className="mark">◈ RingLeader</span><CaseLog /></div>
       <div className="ov-body">
         <div className="eyebrow">Investigation complete</div>
         <h1>{rings.length} fraud {rings.length === 1 ? 'ring' : 'rings'} found,<br />hiding among {net.accounts.toLocaleString()} accounts.</h1>

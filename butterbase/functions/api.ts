@@ -382,8 +382,11 @@ export default async function handler(req: Request, ctx: any): Promise<Response>
       return json({ ok: true, total: c.rows?.[0]?.n ?? null });
     }
     if (req.method === 'GET' && op === 'cases') {
-      const c = await ctx.db.query(`SELECT count(*)::int AS n FROM cases`);
-      return json({ total: c.rows?.[0]?.n ?? 0 });
+      const rows = await ctx.db.query(
+        `SELECT id, ring_key, typology, severity, score, action, created_at
+         FROM cases ORDER BY created_at DESC LIMIT 50`
+      );
+      return json({ total: rows.rows?.length ?? 0, cases: rows.rows ?? [] });
     }
     // POST = full investigation (detector + LLM + subgraph)
     const body = req.method === 'POST' ? await req.json().catch(() => ({})) : {};

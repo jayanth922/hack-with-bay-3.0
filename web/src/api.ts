@@ -119,6 +119,15 @@ export async function loadVerdicts(): Promise<Record<string, Verdict>> {
   return map;
 }
 
+export interface CaseRow { id: string; ring_key: string; typology: string; severity: string; score: number; action: string; created_at: string; }
+
+// Read the case log back from Butterbase Postgres.
+export async function getCases(): Promise<CaseRow[]> {
+  const r = await authed(isFunction ? `${BASE}?op=cases` : `${BASE}/api/cases`);
+  if (!r.ok) throw new Error(`cases failed: ${r.status}`);
+  return (await r.json()).cases ?? [];
+}
+
 // Persist an analyst action (freeze / file SAR) as a case row in Butterbase Postgres.
 export async function logCase(c: RingCase, action: 'freeze' | 'sar'): Promise<{ total: number }> {
   const e = c.evidence;
