@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { fullGraph, investigate, InvestigatedRing } from './api';
+import { fullGraph, scan, loadVerdicts, ringKey, RingCase, Verdict } from './api';
 
-type Phase = 'landing' | 'loading' | 'story';
+type Phase = 'landing' | 'loading' | 'overview' | 'story';
 
 export default function App() {
   const [phase, setPhase] = useState<Phase>('landing');
   const [net, setNet] = useState({ accounts: 0, txns: 0 });
-  const [rings, setRings] = useState<InvestigatedRing[]>([]);
+  const [rings, setRings] = useState<RingCase[]>([]);
   const [ringIdx, setRingIdx] = useState(0);
   const [step, setStep] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -18,32 +18,46 @@ export default function App() {
 
   useEffect(() => {
     if (phase !== 'loading') return;
-    const t = setInterval(() => setLoadStep((s) => (s + 1) % 4), 900);
+    const t = setInterval(() => setLoadStep((s) => (s + 1) % 3), 850);
     return () => clearInterval(t);
   }, [phase]);
 
   async function start() {
     setPhase('loading'); setError(null); setLoadStep(0);
     try {
-      const res = await investigate();
-      if (!res.rings.length) throw new Error('No rings detected.');
-      setRings(res.rings); setRingIdx(0); setStep(0); setPhase('story');
+      const cases = await scan();               // fast: clues render from this
+      if (!cases.length) throw new Error('No rings detected.');
+      setRings(cases); setRingIdx(0); setStep(0); setPhase('overview');
+      loadVerdicts()                            // slow: AI verdicts stream in behind
+        .then((map) => setRings((prev) => prev.map((c) => ({ ...c, verdict: map[ringKey(c.evidence.ringAccounts)] ?? c.verdict }))))
+        .catch(() => {});
     } catch (e: any) { setError(String(e.message ?? e)); setPhase('landing'); }
   }
 
+  // keyboard navigation in the story
+  const ring = rings[ringIdx];
+  const steps = ring ? buildSteps(ring) : [];
+  useEffect(() => {
+    if (phase !== 'story') return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === 'ArrowRight') setStep((s) => Math.min(s + 1, steps.length - 1));
+      else if (ev.key === 'ArrowLeft') setStep((s) => Math.max(s - 1, 0));
+      else if (ev.key === 'Escape') setPhase('overview');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [phase, steps.length]);
+
   if (phase === 'landing') return <Landing net={net} onStart={start} error={error} />;
   if (phase === 'loading') return <Loading step={loadStep} />;
+  if (phase === 'overview') return <Overview net={net} rings={rings} onPick={(i) => { setRingIdx(i); setStep(0); setPhase('story'); }} />;
 
-  const ring = rings[ringIdx];
-  const steps = buildSteps(ring);
   const last = step === steps.length - 1;
-  const moreRings = ringIdx < rings.length - 1;
-
   return (
     <div className="stage">
       <header className="bar">
         <span className="mark">◈ RingLeader</span>
-        <span className="crumbs">Ring {ringIdx + 1} of {rings.length}</span>
+        <button className="crumbs link" onClick={() => setPhase('overview')}>← All rings</button>
         <span className="progress">{String(step + 1).padStart(2, '0')} <em>/ {String(steps.length).padStart(2, '0')}</em></span>
       </header>
 
@@ -63,14 +77,14 @@ export default function App() {
         <div className="btns">
           {step > 0 && <button className="ghost" onClick={() => setStep(step - 1)}>← Back</button>}
           {!last && <button className="primary" onClick={() => setStep(step + 1)}>Next →</button>}
-          {last && moreRings && <button className="primary" onClick={() => { setRingIdx(ringIdx + 1); setStep(0); }}>Next ring →</button>}
-          {last && !moreRings && <button className="primary" onClick={() => { setRingIdx(0); setStep(0); }}>Start over ↺</button>}
+          {last && <button className="primary" onClick={() => setPhase('overview')}>Done — back to rings ↺</button>}
         </div>
       </footer>
     </div>
   );
 }
 
+/* ── landing ── */
 function Landing({ net, onStart, error }: { net: { accounts: number; txns: number }; onStart: () => void; error: string | null }) {
   return (
     <div className="landing">
@@ -89,34 +103,55 @@ function Landing({ net, onStart, error }: { net: { accounts: number; txns: numbe
 }
 
 function Loading({ step }: { step: number }) {
-  const msgs = ['Reading the transaction graph…', 'Grouping accounts by shared devices…', 'Tracing the flow of money…', 'Asking the AI investigator…'];
+  const msgs = ['Reading the transaction graph…', 'Grouping accounts by shared devices…', 'Tracing the flow of money…'];
   return <div className="loading-page"><div className="pulse" /><div className="load-msg">{msgs[step]}</div></div>;
 }
 
-/* ── steps: each clue paired with the real data that proves it ── */
+/* ── overview: bridges the whole network to the specific rings ── */
+function Overview({ net, rings, onPick }: { net: { accounts: number }; rings: RingCase[]; onPick: (i: number) => void }) {
+  const flagged = rings.reduce((n, r) => n + r.evidence.ringAccounts.length, 0);
+  const exposure = rings.reduce((n, r) => n + (r.evidence.totalFlow || 0), 0);
+  const sevColor: Record<string, string> = { critical: '#e5484d', high: '#f76808', medium: '#f5a524', low: '#8b98b4' };
+  return (
+    <div className="overview">
+      <span className="mark top">◈ RingLeader</span>
+      <div className="ov-body">
+        <div className="eyebrow">Investigation complete</div>
+        <h1>{rings.length} fraud {rings.length === 1 ? 'ring' : 'rings'} found,<br />hiding among {net.accounts.toLocaleString()} accounts.</h1>
+        <p>They conceal <b>{flagged} accounts</b> moving <b>${Math.round(exposure).toLocaleString()}</b> in coordinated activity. Individually, not one of them tripped a single alarm. Open a ring to see exactly how they gave themselves away.</p>
+        <div className="ring-cards">
+          {rings.map((r, i) => (
+            <button key={i} className="ring-card" onClick={() => onPick(i)}>
+              <div className="rc-top"><span className="rc-sev" style={{ background: sevColor[r.evidence.severity] }}>{r.evidence.severity}</span><span className="rc-name">Ring {i + 1}</span></div>
+              <div className="rc-n">{r.evidence.ringAccounts.length} accounts, one operator</div>
+              <div className="rc-meta">${Math.round(r.evidence.totalFlow).toLocaleString()} cycled · shares a device</div>
+              <div className="rc-go">Investigate →</div>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="foot">Neo4j finds the ring · RocketRide explains it · Butterbase serves it</div>
+    </div>
+  );
+}
+
+/* ── steps ── */
 interface Step { kicker: string; title: string; body: ReactNode; evidence?: ReactNode; reveal: number; verdict?: boolean; }
-
 const firstName = (id: string, accts: { id: string; name: string }[]) => accts.find((a) => a.id === id)?.name.split(' ')[0] ?? id;
-const fmtTime = (iso?: string) => {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-};
+const fmtTime = (iso?: string) => iso ? new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : '—';
 
-function buildSteps(ring: InvestigatedRing): Step[] {
+function buildSteps(ring: RingCase): Step[] {
   const e = ring.evidence, g = ring.graph;
   const n = e.ringAccounts.length;
   const device = g.identities.find((i) => i.kind === 'device');
   const ip = g.identities.find((i) => i.kind === 'ip');
   const name = (id: string) => firstName(id, g.accounts);
 
-  // real money trail from the cycle + actual transfer amounts
   const cyc = e.cycle && e.cycle.length > 2 ? e.cycle : g.accounts.map((a) => a.id).concat(g.accounts[0].id);
   const amt = new Map(g.transfers.map((t) => [t.source + '>' + t.target, t.amount]));
   const trail = [] as { from: string; to: string; amount: number }[];
   for (let i = 0; i < cyc.length - 1; i++) trail.push({ from: name(cyc[i]), to: name(cyc[i + 1]), amount: amt.get(cyc[i] + '>' + cyc[i + 1]) ?? 0 });
   const total = trail.reduce((s, h) => s + h.amount, 0) || (e.cycleAmount ?? 0);
-
   const created = [...g.accounts].filter((a) => a.createdAt).sort((a, b) => (a.createdAt! < b.createdAt! ? -1 : 1));
   const structured = g.transfers.filter((t) => t.amount >= 9000 && t.amount < 10000).map((t) => t.amount);
 
@@ -124,12 +159,16 @@ function buildSteps(ring: InvestigatedRing): Step[] {
     {
       kicker: 'The setup', reveal: 0,
       title: `Meet these ${n} accounts.`,
-      body: <>On paper, {n} unrelated customers. Every payment they make looks normal on its own, so a traditional filter that checks one transaction at a time sees nothing wrong.</>,
+      body: <>They're {n} separate customers, and their payments look completely ordinary. A traditional filter checks one transaction at a time — so it sees nothing wrong here.</>,
       evidence: (
         <div className="ev">
-          <div className="ev-h">The {n} accounts</div>
-          <div className="chips">{g.accounts.map((a) => <span key={a.id} className="chip">{a.name}</span>)}</div>
-          <div className="ev-note">0 flagged by transaction-level checks.</div>
+          <div className="ev-h">A few of their payments</div>
+          <div className="trail">
+            {trail.slice(0, 3).map((h, i) => (
+              <div key={i} className="hop"><span className="who">{h.from}</span><span className="arr">→</span><span className="who">{h.to}</span><span className="amt">${h.amount.toLocaleString()}</span><span className="ok">✓ looks normal</span></div>
+            ))}
+          </div>
+          <div className="ev-note">Each one passes every standard check. The fraud is invisible — until you look at all of them <b>together</b>.</div>
         </div>
       ),
     },
@@ -138,14 +177,14 @@ function buildSteps(ring: InvestigatedRing): Step[] {
   if (device) steps.push({
     kicker: 'Clue 1 — shared identity', reveal: 1,
     title: 'They all log in from one device.',
-    body: <>All {n} accounts authenticate from a <b>single physical device</b>. Independent customers don't share one phone with {n - 1} strangers — this is one operator wearing {n} masks.</>,
+    body: <>Zoom out and the disguise slips: every one of these {n} accounts signs in from a <b>single physical device</b>. Real, independent customers don't share one phone with {n - 1} strangers.</>,
     evidence: (
       <div className="ev">
-        <div className="ev-h">What the graph shows</div>
+        <div className="ev-h">Straight from the graph</div>
         <div className="kv"><span>Device fingerprint</span><code>{device.label}</code></div>
         <div className="kv"><span>Logged in by</span><b>all {device.accounts.length} accounts</b></div>
-        {ip && <div className="kv"><span>Shared IP address</span><code>{ip.label}</code> <small>({ip.accounts.length} accounts)</small></div>}
-        <div className="ev-note">Expected for {n} real customers: {n} different devices.</div>
+        {ip && <div className="kv"><span>Shared IP address</span><code>{ip.label}</code> <small>· {ip.accounts.length} accounts</small></div>}
+        <div className="ev-note">Expected for {n} real customers: <b>{n} different devices</b>. Found: one.</div>
       </div>
     ),
   });
@@ -153,15 +192,15 @@ function buildSteps(ring: InvestigatedRing): Step[] {
   steps.push({
     kicker: 'Clue 2 — circular flow', reveal: 2,
     title: 'The money runs in a loop.',
-    body: <>Follow the cash: it hops from account to account and lands back where it began. Money that returns to its own origin isn't commerce — it's <b>layering</b>, the core step of laundering.</>,
+    body: <>Now follow the cash. Those "normal" payments from the first screen? They chain together and land <b>right back where they started</b>. Money returning to its own origin isn't commerce — it's <b>layering</b>, the heart of money laundering.</>,
     evidence: (
       <div className="ev">
-        <div className="ev-h">The money trail (real transactions)</div>
+        <div className="ev-h">The money trail — same transactions, connected</div>
         <div className="trail">
           {trail.map((h, i) => (
             <div key={i} className="hop"><span className="who">{h.from}</span><span className="arr">→</span><span className="who">{h.to}</span><span className="amt">${h.amount.toLocaleString()}</span></div>
           ))}
-          <div className="hop back"><span className="arr">↩</span> returns to {trail[0]?.from}<span className="amt total">${Math.round(total).toLocaleString()} cycled</span></div>
+          <div className="hop back"><span className="arr">↩</span> back to {trail[0]?.from}<span className="amt total">${Math.round(total).toLocaleString()} cycled</span></div>
         </div>
       </div>
     ),
@@ -169,19 +208,19 @@ function buildSteps(ring: InvestigatedRing): Step[] {
 
   if (created.length || structured.length >= 2) steps.push({
     kicker: 'Clue 3 — coordination', reveal: 3,
-    title: 'They were built together, to dodge detection.',
-    body: <>Two more tells that this was engineered: the accounts were opened moments apart, and every transfer is sized to slip under the reporting radar.</>,
+    title: 'They were built together, to stay hidden.',
+    body: <>Two final tells that a human engineered this: the accounts were opened moments apart, and every transfer is sized to slip under the reporting radar.</>,
     evidence: (
       <div className="ev">
         {created.length > 0 && <>
-          <div className="ev-h">Account creation timestamps</div>
+          <div className="ev-h">Account creation times</div>
           <div className="times">{created.map((a) => <div key={a.id} className="trow"><span>{firstName(a.id, g.accounts)}</span><code>{fmtTime(a.createdAt)}</code></div>)}</div>
-          <div className="ev-note">All {created.length} created within {e.creationWindowMinutes} minutes — not a coincidence.</div>
+          <div className="ev-note">All {created.length} opened within <b>{e.creationWindowMinutes} minutes</b>.</div>
         </>}
         {structured.length >= 2 && <>
-          <div className="ev-h" style={{ marginTop: 14 }}>Transfer amounts</div>
+          <div className="ev-h" style={{ marginTop: 16 }}>Transfer amounts</div>
           <div className="chips">{structured.map((a, i) => <span key={i} className="chip warn">${a.toLocaleString()}</span>)}</div>
-          <div className="ev-note">Every one just under the <b>$10,000</b> federal reporting threshold (structuring).</div>
+          <div className="ev-note">Every one just under the <b>$10,000</b> reporting threshold — a deliberate dodge called structuring.</div>
         </>}
       </div>
     ),
@@ -189,27 +228,33 @@ function buildSteps(ring: InvestigatedRing): Step[] {
 
   steps.push({
     kicker: 'The verdict', reveal: 4, verdict: true,
-    title: n >= 5 ? 'Four red flags. Same accounts. No coincidence.' : 'A coordinated fraud ring.',
-    body: <>No single signal proves fraud on its own. But shared device <b>+</b> circular money <b>+</b> synchronized signup <b>+</b> structured amounts, all landing on the exact same {n} accounts, is a pattern that does not occur by chance.</>,
+    title: 'Four red flags. Same accounts. Not chance.',
+    body: <>No single signal is proof. But shared device <b>+</b> circular money <b>+</b> synchronized signups <b>+</b> structured amounts, all on the <em>exact same {n} accounts</em>, is a fingerprint that doesn't happen by accident.</>,
   });
   return steps;
 }
 
-function VerdictCard({ ring }: { ring: InvestigatedRing }) {
-  const v = ring.verdict;
+/* ── verdict card (streams in) ── */
+function VerdictCard({ ring }: { ring: RingCase }) {
+  const v: Verdict | null = ring.verdict;
+  const score = v?.score ?? ring.evidence.score;
   return (
     <div className="verdict">
-      <div className="v-row"><span className="risk">Risk {v.score}/100</span><span className="via">verdict written by an AI investigator on <b>RocketRide Cloud</b></span></div>
-      <p className="v-expl">{v.explanation}</p>
-      <div className="v-action"><b>Recommended action.</b> {v.recommendedAction}</div>
-      <div className="v-note">↳ The detector was never told these accounts were fraudulent. It surfaced them from the graph patterns above — automatically.</div>
+      <div className="v-row"><span className="risk">Risk {score}/100</span><span className="via">verdict by an AI investigator on <b>RocketRide Cloud</b></span></div>
+      {v ? <>
+        <p className="v-expl">{v.explanation}</p>
+        <div className="v-action"><b>Recommended action.</b> {v.recommendedAction}</div>
+      </> : (
+        <div className="v-pending"><span className="pulse sm" /> The RocketRide investigator is writing its verdict…</div>
+      )}
+      <div className="v-note">↳ The detector was never told these accounts were fraudulent. It surfaced them from the patterns above — automatically.</div>
       <div className="v-actions"><button className="danger">Freeze accounts</button><button className="plain">File SAR</button></div>
     </div>
   );
 }
 
-/* ── diagram (builds up per reveal step) ── */
-function Diagram({ ring, reveal }: { ring: InvestigatedRing; reveal: number }) {
+/* ── diagram ── */
+function Diagram({ ring, reveal }: { ring: RingCase; reveal: number }) {
   const accts = ring.graph.accounts;
   const device = ring.graph.identities.find((i) => i.kind === 'device');
   const layout = useMemo(() => {

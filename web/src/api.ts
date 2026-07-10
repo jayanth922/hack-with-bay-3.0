@@ -34,6 +34,13 @@ export interface InvestigatedRing {
   graph: RingGraph;
 }
 
+// A ring whose data-driven evidence is ready but whose AI verdict may still be loading.
+export interface RingCase {
+  evidence: Evidence;
+  verdict: Verdict | null;
+  graph: RingGraph;
+}
+
 export interface NetworkGraph {
   nodes: Array<{ id: string; name: string; country: string; planted?: boolean }>;
   edges: Array<{ source: string; target: string; amount: number; ts: string }>;
@@ -81,12 +88,30 @@ export async function fullGraph(): Promise<NetworkGraph> {
   return r.json();
 }
 
-export async function investigate(): Promise<{ rings: InvestigatedRing[]; ringsFound: number }> {
+// Fast: graph detection only (no LLM). Returns rings with evidence + graph so the
+// walkthrough can render immediately.
+export async function scan(): Promise<RingCase[]> {
+  const r = await authed(isFunction ? `${BASE}?op=scan` : `${BASE}/api/scan`);
+  if (!r.ok) throw new Error(`scan failed: ${r.status}`);
+  const { rings } = await r.json();
+  return (rings ?? []).map((fl: any) => ({ evidence: fl, verdict: null, graph: fl.graph }));
+}
+
+const ringKey = (accts: string[]) => [...accts].sort().join('|');
+
+// Slower: runs the RocketRide Cloud investigator for every ring. Returns verdicts
+// keyed by ring so they can be merged into the already-rendered cases.
+export async function loadVerdicts(): Promise<Record<string, Verdict>> {
   const r = await authed(isFunction ? BASE : `${BASE}/api/investigate`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ mode: 'scan' }),
   });
-  if (!r.ok) throw new Error(`investigate failed: ${r.status}`);
-  return r.json();
+  if (!r.ok) throw new Error(`verdicts failed: ${r.status}`);
+  const { rings } = await r.json();
+  const map: Record<string, Verdict> = {};
+  for (const rr of rings ?? []) map[ringKey(rr.evidence.ringAccounts)] = rr.verdict;
+  return map;
 }
+
+export { ringKey };
