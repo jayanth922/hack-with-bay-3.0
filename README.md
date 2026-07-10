@@ -11,6 +11,18 @@ person — hides in plain sight, because every payment looks ordinary on its own
 models the whole network as a Neo4j property graph, finds the rings with graph queries, and a
 RocketRide Cloud pipeline explains each one in plain English with a recommended action.
 
+## Platform
+
+<img width="1408" height="757" alt="image" src="https://github.com/user-attachments/assets/86976368-e3b7-4239-b182-7b5ca4ef5077" />
+<img width="1408" height="757" alt="image" src="https://github.com/user-attachments/assets/da461807-cdf4-46d1-9f5e-c25a457376a8" />
+<img width="1408" height="757" alt="image" src="https://github.com/user-attachments/assets/24c2c62c-e642-4869-bd31-2923f88af68d" />
+<img width="1408" height="757" alt="image" src="https://github.com/user-attachments/assets/18b3cf8e-77c2-4a56-bbbc-46c692fd3071" />
+<img width="1408" height="757" alt="image" src="https://github.com/user-attachments/assets/183a7062-cc54-4aa9-ab2c-87b4eb3dd8d3" />
+<img width="1408" height="757" alt="image" src="https://github.com/user-attachments/assets/3300a968-ed1f-4705-ad55-3c0e27ae2b49" />
+<img width="1408" height="757" alt="image" src="https://github.com/user-attachments/assets/6420eb98-53da-4e92-985a-880a315e1e0c" />
+
+
+
 ## It catches three different kinds of fraud
 
 The detector isn't a one-trick demo — it classifies distinct fraud typologies by their graph
