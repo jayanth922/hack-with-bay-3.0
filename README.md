@@ -52,9 +52,12 @@ Butterbase serverless function  /v1/app_6weti6gprado/fn/api           ← Butter
    │      + money topology: cycles (a)-[:SENT*2..7]->(a), fan-in,
    │        fan-out + burst-signup + structuring signals
    │
-   └─►  RocketRide Cloud pipeline  (POST /task → /task/data)          ← LLM INVESTIGATOR
-          webhook → question → llm_openai_api → response_answers
-          (the LLM node calls the Butterbase AI gateway)             ← Butterbase AI gateway
+   ├─►  RocketRide Cloud pipeline  (POST /task → /task/data)          ← LLM INVESTIGATOR
+   │      webhook → question → llm_openai_api → response_answers
+   │      (the LLM node calls the Butterbase AI gateway)             ← Butterbase AI gateway
+   │
+   └─►  Butterbase Postgres  (ctx.db)                                 ← CASE MANAGEMENT
+          Freeze accounts / File SAR → INSERT case; Case log reads back
 ```
 
 Remove **any** one and the product stops working:
@@ -63,7 +66,7 @@ Remove **any** one and the product stops working:
 |------|-------------------|----------|
 | **Neo4j Aura** | The detection substrate. Rings are found with connected-components over shared devices/IPs/cards + **money-topology queries** (cycles / fan-in / fan-out) — impossible in SQL rows. | ✅ 197 accounts / 732 txns live; all 3 planted rings detected & classified |
 | **RocketRide Cloud** | The deployed **investigator pipeline**. The Butterbase function POSTs each ring's evidence to the pipeline; the LLM node writes the verdict. Every production verdict is `source: "rocketride"`. | ✅ live pipeline, verdict returned via REST `/task` |
-| **Butterbase** | Frontend hosting (live URL), analyst **auth** (JWT), the serverless **function** that orchestrates detection, the **AI gateway** that powers the RocketRide LLM node, and the **submission** path (MCP). | ✅ deployed app `app_6weti6gprado` |
+| **Butterbase** | Five load-bearing roles: frontend **hosting** (live URL), analyst **auth** (JWT), the serverless **function** that orchestrates detection, the **AI gateway** that powers the RocketRide LLM node, and **Postgres** for case management (Freeze / File SAR persist a case; the Case Log reads it back). Submission also runs through its MCP. | ✅ deployed app `app_6weti6gprado` |
 
 ---
 
@@ -80,6 +83,8 @@ Remove **any** one and the product stops working:
    - *Clue 2* — the money **loops / funnels / fans out** (the real transaction trail with amounts).
    - *Clue 3* — they were created within minutes of each other, in structured sub-$10K amounts.
    - *The verdict* — written live by the **RocketRide Cloud** investigator, with a recommended action.
+4. Click **Freeze accounts** or **File SAR** → the action is persisted as a **case in Butterbase
+   Postgres**. Open the **Case log** (top bar) to see it read straight back from the database.
 
 The dataset is deterministic (seeded), so the demo hits every time. `npm run scan` prints a
 **precision check against ground truth**, proving the detector rediscovers the planted rings on
