@@ -123,9 +123,9 @@ function Overview({ net, rings, onPick }: { net: { accounts: number }; rings: Ri
         <div className="ring-cards">
           {rings.map((r, i) => (
             <button key={i} className="ring-card" onClick={() => onPick(i)}>
-              <div className="rc-top"><span className="rc-sev" style={{ background: sevColor[r.evidence.severity] }}>{r.evidence.severity}</span><span className="rc-name">Ring {i + 1}</span></div>
-              <div className="rc-n">{r.evidence.ringAccounts.length} accounts, one operator</div>
-              <div className="rc-meta">${Math.round(r.evidence.totalFlow).toLocaleString()} cycled · shares a device</div>
+              <div className="rc-top"><span className="rc-sev" style={{ background: sevColor[r.evidence.severity] }}>{r.evidence.severity}</span><span className="rc-tag">Ring {i + 1}</span></div>
+              <div className="rc-name">{r.evidence.typology ?? 'Coordinated fraud ring'}</div>
+              <div className="rc-meta">{r.evidence.ringAccounts.length} accounts · ${Math.round(r.evidence.totalFlow).toLocaleString()} moved</div>
               <div className="rc-go">Investigate →</div>
             </button>
           ))}
@@ -157,20 +157,46 @@ interface Step { kicker: string; title: string; body: ReactNode; evidence?: Reac
 const firstName = (id: string, accts: { id: string; name: string }[]) => accts.find((a) => a.id === id)?.name.split(' ')[0] ?? id;
 const fmtTime = (iso?: string) => iso ? new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : '—';
 
+type Attr = 'device' | 'ip' | 'card' | 'identity';
+type Topo = 'cycle' | 'fanin' | 'fanout' | 'cluster';
+const ATTR: Record<Attr, { icon: string; word: string; line: string; field: string }> = {
+  device: { icon: '📱', word: 'device', line: 'log in from one device', field: 'Device fingerprint' },
+  ip: { icon: '🌐', word: 'IP address', line: 'connect from one IP address', field: 'IP address' },
+  card: { icon: '💳', word: 'card', line: 'run their money through one payment card', field: 'Card number' },
+  identity: { icon: '🔗', word: 'identifier', line: 'share one identifier', field: 'Identifier' },
+};
+const TOPO: Record<Topo, string> = {
+  cycle: 'The money runs in a loop.',
+  fanin: 'The money funnels into one account.',
+  fanout: 'One account feeds all the others.',
+  cluster: 'They only ever pay each other.',
+};
+
 function buildSteps(ring: RingCase): Step[] {
   const e = ring.evidence, g = ring.graph;
   const n = e.ringAccounts.length;
-  const device = g.identities.find((i) => i.kind === 'device');
-  const ip = g.identities.find((i) => i.kind === 'ip');
+  const attr = (e.attr ?? 'device') as Attr;
+  const topo = (e.topology ?? 'cycle') as Topo;
+  const hub = g.identities.find((i) => i.kind === attr) ?? g.identities[0];
   const name = (id: string) => firstName(id, g.accounts);
 
-  const cyc = e.cycle && e.cycle.length > 2 ? e.cycle : g.accounts.map((a) => a.id).concat(g.accounts[0].id);
-  const amt = new Map(g.transfers.map((t) => [t.source + '>' + t.target, t.amount]));
-  const trail = [] as { from: string; to: string; amount: number }[];
-  for (let i = 0; i < cyc.length - 1; i++) trail.push({ from: name(cyc[i]), to: name(cyc[i + 1]), amount: amt.get(cyc[i] + '>' + cyc[i + 1]) ?? 0 });
-  const total = trail.reduce((s, h) => s + h.amount, 0) || (e.cycleAmount ?? 0);
+  // money trail from the actual transfers — its shape reflects the topology
+  const trail = g.transfers.map((t) => ({ from: name(t.source), to: name(t.target), amount: t.amount }));
+  const total = trail.reduce((s, h) => s + h.amount, 0) || e.totalFlow;
+  const endName = topo === 'fanin' && e.collector ? name(e.collector.id) : topo === 'fanout' && e.source ? name(e.source.id) : trail[0]?.from;
+  const endLine = topo === 'fanin' ? `↳ all into ${endName} — $${Math.round(total).toLocaleString()} collected`
+    : topo === 'fanout' ? `↳ out from ${endName} — $${Math.round(total).toLocaleString()} distributed`
+    : topo === 'cluster' ? `$${Math.round(total).toLocaleString()} kept inside the group`
+    : `↩ back to ${endName} — $${Math.round(total).toLocaleString()} cycled`;
   const created = [...g.accounts].filter((a) => a.createdAt).sort((a, b) => (a.createdAt! < b.createdAt! ? -1 : 1));
   const structured = g.transfers.filter((t) => t.amount >= 9000 && t.amount < 10000).map((t) => t.amount);
+
+  const money2Body: Record<Topo, ReactNode> = {
+    cycle: <>Follow the cash: those "normal" payments chain together and land <b>right back where they started</b>. Money returning to its own origin isn't commerce — it's <b>layering</b>, the heart of laundering.</>,
+    fanin: <>Follow the cash: every account pushes its money into <b>one collector</b>. Many deposits funnelling into a single account is the textbook <b>money-mule</b> pattern.</>,
+    fanout: <>Follow the cash: <b>one account seeds all the others</b>, who move it straight on. That's how a stolen card's funds get dispersed across mules before cash-out.</>,
+    cluster: <>These accounts <b>only ever pay each other</b> — a sealed loop of activity with no real customers involved.</>,
+  };
 
   const steps: Step[] = [
     {
@@ -191,33 +217,32 @@ function buildSteps(ring: RingCase): Step[] {
     },
   ];
 
-  if (device) steps.push({
+  if (hub) steps.push({
     kicker: 'Clue 1 — shared identity', reveal: 1,
-    title: 'They all log in from one device.',
-    body: <>Zoom out and the disguise slips: every one of these {n} accounts signs in from a <b>single physical device</b>. Real, independent customers don't share one phone with {n - 1} strangers.</>,
+    title: `They all ${ATTR[attr].line}.`,
+    body: <>Zoom out and the disguise slips: all {n} of these accounts {ATTR[attr].line}. Real, independent customers don't share one {ATTR[attr].word} with {n - 1} strangers — this is one operator behind many masks.</>,
     evidence: (
       <div className="ev">
         <div className="ev-h">Straight from the graph</div>
-        <div className="kv"><span>Device fingerprint</span><code>{device.label}</code></div>
-        <div className="kv"><span>Logged in by</span><b>all {device.accounts.length} accounts</b></div>
-        {ip && <div className="kv"><span>Shared IP address</span><code>{ip.label}</code> <small>· {ip.accounts.length} accounts</small></div>}
-        <div className="ev-note">Expected for {n} real customers: <b>{n} different devices</b>. Found: one.</div>
+        <div className="kv"><span>{ATTR[attr].field}</span><code>{hub.label}</code></div>
+        <div className="kv"><span>Used by</span><b>all {hub.accounts.length} accounts</b></div>
+        <div className="ev-note">Expected for {n} real customers: <b>{n} different {ATTR[attr].word}s</b>. Found: one.</div>
       </div>
     ),
   });
 
   steps.push({
-    kicker: 'Clue 2 — circular flow', reveal: 2,
-    title: 'The money runs in a loop.',
-    body: <>Now follow the cash. Those "normal" payments from the first screen? They chain together and land <b>right back where they started</b>. Money returning to its own origin isn't commerce — it's <b>layering</b>, the heart of money laundering.</>,
+    kicker: 'Clue 2 — money movement', reveal: 2,
+    title: TOPO[topo],
+    body: money2Body[topo],
     evidence: (
       <div className="ev">
-        <div className="ev-h">The money trail — same transactions, connected</div>
+        <div className="ev-h">The money trail — real transactions</div>
         <div className="trail">
           {trail.map((h, i) => (
             <div key={i} className="hop"><span className="who">{h.from}</span><span className="arr">→</span><span className="who">{h.to}</span><span className="amt">${h.amount.toLocaleString()}</span></div>
           ))}
-          <div className="hop back"><span className="arr">↩</span> back to {trail[0]?.from}<span className="amt total">${Math.round(total).toLocaleString()} cycled</span></div>
+          <div className="hop back">{endLine}</div>
         </div>
       </div>
     ),
@@ -245,8 +270,8 @@ function buildSteps(ring: RingCase): Step[] {
 
   steps.push({
     kicker: 'The verdict', reveal: 4, verdict: true,
-    title: 'Four red flags. Same accounts. Not chance.',
-    body: <>No single signal is proof. But shared device <b>+</b> circular money <b>+</b> synchronized signups <b>+</b> structured amounts, all on the <em>exact same {n} accounts</em>, is a fingerprint that doesn't happen by accident.</>,
+    title: `Verdict: ${e.typology ?? 'coordinated fraud ring'}.`,
+    body: <>No single one of these signals is proof on its own. But <b>{e.signals.length} independent red flags</b>, all pointing at the <em>exact same {n} accounts</em>, is a fingerprint that does not happen by chance.</>,
   });
   return steps;
 }
@@ -270,30 +295,36 @@ function VerdictCard({ ring }: { ring: RingCase }) {
   );
 }
 
-/* ── diagram ── */
+/* ── diagram — accounts in a circle, shared identifier as the hub, real transfers as edges ── */
 function Diagram({ ring, reveal }: { ring: RingCase; reveal: number }) {
   const accts = ring.graph.accounts;
-  const device = ring.graph.identities.find((i) => i.kind === 'device');
+  const attr = (ring.evidence.attr ?? 'device') as Attr;
+  const hub = ring.graph.identities.find((i) => i.kind === attr) ?? ring.graph.identities[0];
+
   const layout = useMemo(() => {
     const cyc = ring.evidence.cycle && ring.evidence.cycle.length > 2 ? ring.evidence.cycle.slice(0, -1) : accts.map((a) => a.id);
     const order = cyc.filter((id, i) => cyc.indexOf(id) === i);
+    for (const a of accts) if (!order.includes(a.id)) order.push(a.id); // include non-cycle members
     const W = 500, H = 500, cx = W / 2, cy = H / 2, R = 162, n = order.length;
     const pts = order.map((id, i) => { const ang = -Math.PI / 2 + (i * 2 * Math.PI) / n; return { id, i, x: cx + R * Math.cos(ang), y: cy + R * Math.sin(ang), ang }; });
-    return { W, H, cx, cy, pts, n };
+    return { W, H, cx, cy, pts, pos: Object.fromEntries(pts.map((p) => [p.id, p])) };
   }, [ring]);
-  const { W, H, cx, cy, pts, n } = layout;
-  const usesDevice = new Set(device?.accounts ?? []);
+  const { W, H, cx, cy, pts, pos } = layout as any;
+  const usesHub = new Set(hub?.accounts ?? []);
 
   return (
     <svg className="diagram" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet">
       <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#e5484d" /></marker></defs>
-      <g className={`layer ${reveal >= 1 ? 'show' : ''}`}>{device && pts.filter((p) => usesDevice.has(p.id)).map((p) => <line key={p.id} x1={p.x} y1={p.y} x2={cx} y2={cy} className="spoke" />)}</g>
-      <g className={`layer ${reveal >= 2 ? 'show' : ''}`}>{pts.map((p, i) => { const q = pts[(i + 1) % n]; return <line key={i} x1={p.x} y1={p.y} x2={q.x} y2={q.y} className="money" markerEnd="url(#ar)" />; })}</g>
-      {device && <g className={`hub layer ${reveal >= 1 ? 'show' : ''}`}><circle cx={cx} cy={cy} r={30} /><text x={cx} y={cy - 3} className="hub-icon">📱</text><text x={cx} y={cy + 14} className="hub-label">one device</text></g>}
-      {pts.map((p) => {
+      {/* spokes to the shared identifier hub */}
+      <g className={`layer ${reveal >= 1 ? 'show' : ''}`}>{hub && pts.filter((p: any) => usesHub.has(p.id)).map((p: any) => <line key={p.id} x1={p.x} y1={p.y} x2={cx} y2={cy} className="spoke" />)}</g>
+      {/* real money edges — their shape reveals the topology */}
+      <g className={`layer ${reveal >= 2 ? 'show' : ''}`}>{ring.graph.transfers.map((t, i) => { const a = pos[t.source], b = pos[t.target]; return a && b ? <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="money" markerEnd="url(#ar)" /> : null; })}</g>
+      {/* hub */}
+      {hub && <g className={`hub layer ${reveal >= 1 ? 'show' : ''}`}><circle cx={cx} cy={cy} r={30} /><text x={cx} y={cy - 3} className="hub-icon">{ATTR[attr].icon}</text><text x={cx} y={cy + 14} className="hub-label">one {ATTR[attr].word.split(' ')[0]}</text></g>}
+      {pts.map((p: any) => {
         const out = 27, lx = p.x + Math.cos(p.ang) * out, ly = p.y + Math.sin(p.ang) * out;
         const anchor = Math.cos(p.ang) > 0.3 ? 'start' : Math.cos(p.ang) < -0.3 ? 'end' : 'middle';
-        const flagged = reveal >= 1 && usesDevice.has(p.id);
+        const flagged = reveal >= 1 && usesHub.has(p.id);
         return (
           <g key={p.id} className="acct">
             <circle cx={p.x} cy={p.y} r={18} className={flagged ? 'flag' : ''} />

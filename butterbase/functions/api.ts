@@ -138,7 +138,7 @@ export default async function handler(req: Request, ctx: any): Promise<Response>
   }
 
   async function gatherEvidence(ids: string[]) {
-    const [cycle, sharedDevices, sharedIps, sharedCards, window, flow, structuring] = await Promise.all([
+    const [cycle, sharedDevices, sharedIps, sharedCards, window, flow, structuring, collector, source] = await Promise.all([
       moneyCycle(ids),
       cypher(`MATCH (a:Account)-[:USED_DEVICE]->(d:Device) WHERE a.id IN $ids
               WITH d, collect(a.id) AS accounts WHERE size(accounts) >= 2
@@ -156,16 +156,26 @@ export default async function handler(req: Request, ctx: any): Promise<Response>
       cypher(`MATCH (a:Account)-[r:SENT]->(b:Account)
               WHERE a.id IN $ids AND b.id IN $ids AND r.amount >= 9000 AND r.amount < 10000
               RETURN count(r) AS count`, { ids }),
+      // fan-in: one account receiving from many others (money-mule collector)
+      cypher(`MATCH (a:Account)-[:SENT]->(b:Account) WHERE a.id IN $ids AND b.id IN $ids
+              WITH b.id AS acct, count(DISTINCT a) AS deg RETURN acct, deg ORDER BY deg DESC LIMIT 1`, { ids }),
+      // fan-out: one account sending to many others (stolen-card source)
+      cypher(`MATCH (a:Account)-[:SENT]->(b:Account) WHERE a.id IN $ids AND b.id IN $ids
+              WITH a.id AS acct, count(DISTINCT b) AS deg RETURN acct, deg ORDER BY deg DESC LIMIT 1`, { ids }),
     ]);
     const w = window[0];
     const windowMinutes = w?.maxMs != null ? Math.round((w.maxMs - w.minMs) / 60000) : undefined;
+    const n = ids.length;
+    const col = collector[0], src = source[0];
     return {
-      ringAccounts: ids, size: ids.length,
+      ringAccounts: ids, size: n,
       cycle: cycle?.cycle, cycleAmount: cycle?.amount,
       sharedDevices, sharedIps, sharedCards,
       creationWindowMinutes: windowMinutes,
       totalFlow: flow[0]?.total ?? 0,
       structuringCount: structuring[0]?.count ?? 0,
+      collector: col && col.deg >= Math.ceil((n - 1) * 0.6) ? { id: col.acct, degree: col.deg } : null,
+      source: src && src.deg >= Math.ceil((n - 1) * 0.6) ? { id: src.acct, degree: src.deg } : null,
     };
   }
 
@@ -194,7 +204,13 @@ export default async function handler(req: Request, ctx: any): Promise<Response>
        RETURN 'ip:' + i.addr AS id, 'ip' AS kind, i.addr AS label, accounts`,
       { ids }
     );
-    return { accounts, transfers, identities: [...devices, ...ipsShared] };
+    const cardsShared = await cypher(
+      `MATCH (a:Account)-[:USED_CARD]->(c:Card) WHERE a.id IN $ids
+       WITH c, collect(a.id) AS accounts WHERE size(accounts) >= 2
+       RETURN 'card:' + c.hash AS id, 'card' AS kind, c.hash AS label, accounts`,
+      { ids }
+    );
+    return { accounts, transfers, identities: [...devices, ...cardsShared, ...ipsShared] };
   }
 
   async function fullGraph(limit = 1500) {
@@ -213,25 +229,36 @@ export default async function handler(req: Request, ctx: any): Promise<Response>
     return { nodes, edges };
   }
 
-  // ── Scoring ──
+  // ── Scoring + typology classification ──
   function scoreEvidence(e: any) {
     const signals: string[] = [];
     let score = 0;
     if (e.cycle && e.cycle.length >= 3) {
-      score += 35;
+      score += 30;
       signals.push(`Circular money flow across ${e.cycle.length - 1} accounts totaling $${Math.round(e.cycleAmount ?? 0).toLocaleString()} — funds return to the origin (classic layering).`);
     }
     const bigDevice = e.sharedDevices.find((d: any) => d.accounts.length >= 3);
     if (bigDevice) { score += 25; signals.push(`${bigDevice.accounts.length} accounts share device ${bigDevice.fingerprint} — one operator, many identities.`); }
-    else if (e.sharedDevices.length) { score += 10; signals.push(`Shared device across ${e.sharedDevices[0].accounts.length} accounts.`); }
+    const bigCard = e.sharedCards.find((c: any) => c.accounts.length >= 3);
+    if (bigCard) { score += 25; signals.push(`${bigCard.accounts.length} accounts charge the same card ${bigCard.hash} — a shared (likely stolen) instrument.`); }
     const bigIp = e.sharedIps.find((i: any) => i.accounts.length >= 3);
     if (bigIp) { score += 15; signals.push(`${bigIp.accounts.length} accounts share IP ${bigIp.addr}.`); }
+    if (e.collector) { score += 25; signals.push(`Money funnels from ${e.collector.degree} accounts into a single collector — a money-mule pattern.`); }
+    if (e.source && !e.collector) { score += 20; signals.push(`One account distributes funds to ${e.source.degree} others — a fan-out cash-out pattern.`); }
     if (e.creationWindowMinutes != null && e.size >= 3 && e.creationWindowMinutes <= 60) {
       score += 15; signals.push(`All ${e.size} accounts created within ${e.creationWindowMinutes} min of each other — coordinated burst signup.`);
     }
     if (e.structuringCount >= 2) { score += 10; signals.push(`${e.structuringCount} transfers sized just under the $10k reporting threshold (structuring).`); }
     score = Math.min(100, score);
-    return { ...e, signals, score };
+
+    // dominant shared identifier + money topology -> human typology
+    const attr = bigDevice ? 'device' : bigCard ? 'card' : bigIp ? 'ip' : 'identity';
+    const topology = e.cycle && e.cycle.length >= 3 ? 'cycle' : e.collector ? 'fanin' : e.source ? 'fanout' : 'cluster';
+    let typology = 'Coordinated fraud ring';
+    if (topology === 'cycle') typology = 'Identity ring';
+    else if (topology === 'fanin') typology = 'Money-mule network';
+    else if (topology === 'fanout') typology = 'Stolen-card ring';
+    return { ...e, signals, score, attr, topology, typology };
   }
   const severityFor = (s: number) => (s >= 80 ? 'critical' : s >= 60 ? 'high' : s >= 35 ? 'medium' : 'low');
 

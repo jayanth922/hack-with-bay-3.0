@@ -11,7 +11,7 @@ export interface Verdict {
 export interface RingGraph {
   accounts: Array<{ id: string; name: string; country: string; createdAt?: string; planted?: boolean }>;
   transfers: Array<{ source: string; target: string; amount: number; ts: string }>;
-  identities: Array<{ id: string; kind: 'device' | 'ip'; label: string; accounts: string[] }>;
+  identities: Array<{ id: string; kind: 'device' | 'ip' | 'card'; label: string; accounts: string[] }>;
 }
 
 export interface Evidence {
@@ -24,6 +24,11 @@ export interface Evidence {
   totalFlow: number;
   creationWindowMinutes?: number;
   structuringCount: number;
+  attr?: 'device' | 'ip' | 'card' | 'identity';
+  topology?: 'cycle' | 'fanin' | 'fanout' | 'cluster';
+  typology?: string;
+  collector?: { id: string; degree: number } | null;
+  source?: { id: string; degree: number } | null;
   sharedDevices?: { fingerprint: string; accounts: string[] }[];
   sharedIps?: { addr: string; accounts: string[] }[];
 }

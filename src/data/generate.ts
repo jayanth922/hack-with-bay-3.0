@@ -80,71 +80,63 @@ export function generate(cfg: GenConfig = {}): GraphData {
     });
   }
 
-  // ── Planted fraud rings ──
-  // Each ring: N accounts, all created within minutes, sharing a device + IP,
-  // cycling money A->B->...->A in structured amounts just under $10k.
-  for (let r = 0; r < ringCount; r++) {
-    const ringId = `ring_${r}`;
-    const size = Math.floor(between(cfg.ringSizeMin ?? 5, (cfg.ringSizeMax ?? 7) + 1));
+  // ── Planted fraud rings — three DISTINCT typologies ──
+  // Each shares a different identifier and moves money in a different shape, so the
+  // product demonstrates catching several kinds of fraud, not one.
+  interface RingSpec { key: string; shared: 'device' | 'ip' | 'card'; topology: 'cycle' | 'fanin' | 'fanout'; sizeMin: number; sizeMax: number; structured: boolean; }
+  const SPECS: RingSpec[] = [
+    { key: 'identity', shared: 'device', topology: 'cycle', sizeMin: 5, sizeMax: 6, structured: true },   // one operator, many fake IDs
+    { key: 'mule', shared: 'ip', topology: 'fanin', sizeMin: 6, sizeMax: 7, structured: true },            // money-mule funnel
+    { key: 'card', shared: 'card', topology: 'fanout', sizeMin: 5, sizeMax: 6, structured: false },        // stolen-card cash-out
+  ];
+  const specs = SPECS.slice(0, cfg.rings ?? SPECS.length);
+
+  specs.forEach((spec, r) => {
+    const ringId = `ring_${spec.key}`;
+    const size = Math.floor(between(spec.sizeMin, spec.sizeMax + 1));
     const burstStart = Math.floor(base - between(2 * DAY, 20 * DAY));
-    const sharedDevice = `dev_ring_${r}`;
-    const sharedIp = `ip_ring_${r}`;
     const ringAccts: Account[] = [];
 
     for (let k = 0; k < size; k++) {
-      const id = `acc_ring${r}_${k}`;
-      const createdAtMs = burstStart + Math.floor(between(0, 12 * 60_000)); // within 12 min
+      const id = `acc_${spec.key}_${k}`;
+      const createdAtMs = burstStart + Math.floor(between(0, 11 * 60_000)); // burst signup within ~11 min
       const acc: Account = {
-        id,
-        name: `${pick(FIRST)} ${pick(LAST)}`,
-        createdAt: new Date(createdAtMs).toISOString(),
-        createdAtMs,
-        country: pick(COUNTRIES),
-        planted: true,
-        ringId,
+        id, name: `${pick(FIRST)} ${pick(LAST)}`,
+        createdAt: new Date(createdAtMs).toISOString(), createdAtMs,
+        country: pick(COUNTRIES), planted: true, ringId,
       };
       accounts.push(acc);
       ringAccts.push(acc);
-      // shared device + IP across the whole ring; cards differ (mule cards)
-      devices.push({ account: id, value: sharedDevice });
-      // most share the IP; one uses a decoy to add realism
-      ips.push({ account: id, value: k === size - 1 ? `ip_${Math.floor(rnd() * 50)}` : sharedIp });
-      cards.push({ account: id, value: `card_ring${r}_${k}` });
+      // the ONE identifier they all share (the giveaway) — the rest are unique
+      devices.push({ account: id, value: spec.shared === 'device' ? `dev_${ringId}` : `dev_${ringId}_${k}` });
+      ips.push({ account: id, value: spec.shared === 'ip' ? `ip_${ringId}` : `ip_${ringId}_${k}` });
+      cards.push({ account: id, value: spec.shared === 'card' ? `card_${ringId}` : `card_${ringId}_${k}` });
     }
 
-    // Circular money flow in a tight time window, structured under $10k.
-    const cycleStart = burstStart + 5 * DAY;
-    for (let k = 0; k < size; k++) {
-      const from = ringAccts[k].id;
-      const to = ringAccts[(k + 1) % size].id;
-      const tsMs = cycleStart + k * Math.floor(between(10 * 60_000, 40 * 60_000));
-      txns.push({
-        txnId: `txn_${ringId}_${k}`,
-        from,
-        to,
-        amount: Math.round(between(9200, 9850) * 100) / 100, // structuring: just under $10k
-        currency: 'USD',
-        ts: new Date(tsMs).toISOString(),
-        tsMs,
-      });
+    const flowStart = burstStart + 5 * DAY;
+    const amt = () => spec.structured
+      ? Math.round(between(9200, 9850) * 100) / 100   // structuring: just under $10k
+      : Math.round(between(300, 1800) * 100) / 100;   // ordinary-sized card cash-outs
+    let hop = 0;
+    const push = (from: string, to: string) => {
+      const tsMs = flowStart + hop * Math.floor(between(8 * 60_000, 35 * 60_000));
+      txns.push({ txnId: `txn_${ringId}_${hop++}`, from, to, amount: amt(), currency: 'USD', ts: new Date(tsMs).toISOString(), tsMs });
+    };
+
+    if (spec.topology === 'cycle') {
+      for (let k = 0; k < size; k++) push(ringAccts[k].id, ringAccts[(k + 1) % size].id);          // A→B→…→A
+    } else if (spec.topology === 'fanin') {
+      for (let k = 1; k < size; k++) push(ringAccts[k].id, ringAccts[0].id);                         // mules → collector
+    } else { // fanout
+      for (let k = 1; k < size; k++) push(ringAccts[0].id, ringAccts[k].id);                         // source → mules
     }
 
-    // A little camouflage: ring accounts also send small legit-looking txns outward.
+    // camouflage: a few small legit-looking outward payments
     for (let k = 0; k < size; k++) {
-      const from = ringAccts[k].id;
-      const to = pick(accounts).id;
-      const tsMs = cycleStart + Math.floor(between(0, 3 * DAY));
-      txns.push({
-        txnId: `txn_${ringId}_noise_${k}`,
-        from,
-        to,
-        amount: Math.round(between(10, 120) * 100) / 100,
-        currency: 'USD',
-        ts: new Date(tsMs).toISOString(),
-        tsMs,
-      });
+      const tsMs = flowStart + Math.floor(between(0, 3 * DAY));
+      txns.push({ txnId: `txn_${ringId}_noise_${k}`, from: ringAccts[k].id, to: pick(accounts).id, amount: Math.round(between(10, 120) * 100) / 100, currency: 'USD', ts: new Date(tsMs).toISOString(), tsMs });
     }
-  }
+  });
 
   return { accounts, txns, devices, ips, cards };
 }
