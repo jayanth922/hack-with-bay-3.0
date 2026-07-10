@@ -9,7 +9,7 @@ export interface Verdict {
 }
 
 export interface RingGraph {
-  accounts: Array<{ id: string; name: string; country: string; planted?: boolean }>;
+  accounts: Array<{ id: string; name: string; country: string; createdAt?: string; planted?: boolean }>;
   transfers: Array<{ source: string; target: string; amount: number; ts: string }>;
   identities: Array<{ id: string; kind: 'device' | 'ip'; label: string; accounts: string[] }>;
 }
