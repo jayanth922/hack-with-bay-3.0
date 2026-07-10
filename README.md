@@ -22,6 +22,7 @@ RocketRide Cloud pipeline explains each one in plain English with a recommended 
 <img width="1408" height="757" alt="image" src="https://github.com/user-attachments/assets/183a7062-cc54-4aa9-ab2c-87b4eb3dd8d3" />
 <img width="1408" height="757" alt="image" src="https://github.com/user-attachments/assets/3300a968-ed1f-4705-ad55-3c0e27ae2b49" />
 <img width="1408" height="757" alt="image" src="https://github.com/user-attachments/assets/6420eb98-53da-4e92-985a-880a315e1e0c" />
+<img width="1408" height="757" alt="image" src="https://github.com/user-attachments/assets/c0c8fc11-2da7-4094-932c-d8a8cd9bb228" />
 
 ---
 
